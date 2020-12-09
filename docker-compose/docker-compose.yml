@@ -1,24 +1,46 @@
-version: "3"
+version: "3.9"
 
 networks:
   monitor-net:
     driver: bridge
 
+configs:
+  sys_creds:
+    file: ./SYS.creds
+  nats_conf:
+    file: ./nats.conf
+
 services:
+  nats:
+    image: synadia/nats-server:nightly
+    container_name: nats-server
+    restart: always
+    entrypoint: /bin/nats-server
+    command: -c /nats.conf -DV
+    networks:
+      - monitor-net
+    configs:
+      - source: nats_conf
+        target: /nats_conf
+        uid: '103'
+        gid: '103'
+        mode: 0440
+
   surveyor:
     image: synadia/nats-surveyor:${SURVEYOR_DOCKER_TAG}
     container_name: nats-surveyor
     restart: always
     volumes:
-      - $NATS_SURVEYOR_CREDS:/etc/surveyor/SYS.creds
       - ./observations:/observations
       - ./jetstream:/jetstream
     entrypoint: /nats-surveyor
-    command: -c ${NATS_SURVEYOR_SERVER_COUNT} -creds /etc/surveyor/SYS.creds -s "${NATS_SURVEYOR_SERVERS}" -observe /observations
+    command: -c ${NATS_SURVEYOR_SERVER_COUNT} -creds /SYS.creds -s nats -observe /observations
     networks:
       - monitor-net
     labels:
       org.label-schema.group: "nats-monitoring"
+    configs:
+      - sys_creds
 
   prometheus:
     image: prom/prometheus:${PROMETHEUS_DOCKER_TAG}
