@@ -99,6 +99,7 @@ type Surveyor struct {
 	nc           *nats.Conn
 	http         net.Listener
 	statzC       *StatzCollector
+	jszC         *JSzCollector
 	observations []*ServiceObsListener
 	jsAPIAudits  []*JSAdvisoryListener
 }
@@ -182,21 +183,40 @@ func (s *Surveyor) createCollector() error {
 
 	s.Lock()
 	s.statzC = NewStatzCollector(s.nc, s.opts.ExpectedServers, s.opts.PollTimeout)
+	s.jszC = NewJSzCollector(s.nc, s.opts.ExpectedServers, s.opts.PollTimeout)
 	s.Unlock()
 
+	// Register StatzCollector
 	err := prometheus.Register(s.statzC)
 	for i := 0; i < 50 && err != nil; i++ {
 		if _, ok := err.(prometheus.AlreadyRegisteredError); ok {
-			// ignore
-			return nil
+			break
 		}
 
 		// If we're here usually the Prometheus server is unreachable.
 		// Prometheus error types are not documented.
-		log.Printf("Error registering collector: %v", err)
+		log.Printf("Error registering statz collector: %v", err)
 		log.Printf("Retrying in 500 ms...")
 		time.Sleep(500 * time.Millisecond)
 		err = prometheus.Register(s.statzC)
+	}
+	if err != nil {
+		if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+			return err
+		}
+	}
+
+	// Register JSzCollector
+	err = prometheus.Register(s.jszC)
+	for i := 0; i < 50 && err != nil; i++ {
+		if _, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			return nil
+		}
+
+		log.Printf("Error registering jsz collector: %v", err)
+		log.Printf("Retrying in 500 ms...")
+		time.Sleep(500 * time.Millisecond)
+		err = prometheus.Register(s.jszC)
 	}
 	return err
 }
@@ -285,14 +305,15 @@ func (s *Surveyor) httpConcurrentPollBlockMiddleware(next http.Handler) http.Han
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		s.Lock()
 		sz := s.statzC
+		jz := s.jszC
 		s.Unlock()
 
-		if sz == nil {
+		if sz == nil && jz == nil {
 			next.ServeHTTP(rw, r)
 			return
 		}
 
-		if sz.Polling() {
+		if (sz != nil && sz.Polling()) || (jz != nil && jz.Polling()) {
 			rw.WriteHeader(http.StatusServiceUnavailable)
 			rw.Write([]byte("Concurrent polls are not supported"))
 			log.Printf("Concurrent access detected and blocked\n")
@@ -502,6 +523,7 @@ func (s *Surveyor) Stop() {
 	}
 
 	prometheus.Unregister(s.statzC)
+	prometheus.Unregister(s.jszC)
 	s.http.Close()
 	s.nc.Drain()
 	s.Unlock()
