@@ -73,6 +73,7 @@ type Options struct {
 	KeyFile              string
 	CaFile               string
 	TLSFirst             bool
+	TLSInsecure          bool
 	HTTPCertFile         string
 	HTTPKeyFile          string
 	HTTPCaFile           string
@@ -176,12 +177,18 @@ func (s *Surveyor) MetricInfos() []MetricInfo {
 }
 
 func newSurveyorConnPool(opts *Options, registry *prometheus.Registry) *natsConnPool {
+	var tlsConfig *tls.Config
+	if opts.TLSInsecure {
+		tlsConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+
 	natsDefaults := &natsContextDefaults{
-		Name:    opts.Name,
-		URL:     opts.URLs,
-		TLSCert: opts.CertFile,
-		TLSKey:  opts.KeyFile,
-		TLSCA:   opts.CaFile,
+		Name:      opts.Name,
+		URL:       opts.URLs,
+		TLSCert:   opts.CertFile,
+		TLSKey:    opts.KeyFile,
+		TLSCA:     opts.CaFile,
+		TLSConfig: tlsConfig,
 	}
 
 	reconnectCtr := prometheus.NewCounterVec(prometheus.CounterOpts{

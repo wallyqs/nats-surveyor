@@ -205,6 +205,10 @@ func init() {
 	rootCmd.Flags().Bool("tlsfirst", false, "Whether to use TLS First connections.")
 	_ = viper.BindPFlag("tlsfirst", rootCmd.Flags().Lookup("tlsfirst"))
 
+	// tlsinsecure
+	rootCmd.Flags().BoolP("tlsinsecure", "k", false, "Allow insecure TLS connections.")
+	_ = viper.BindPFlag("tlsinsecure", rootCmd.Flags().Lookup("tlsinsecure"))
+
 	// port
 	rootCmd.Flags().IntP("port", "p", surveyor.DefaultListenPort, "Port to listen on.")
 	_ = viper.BindPFlag("port", rootCmd.Flags().Lookup("port"))
@@ -312,6 +316,7 @@ func getSurveyorOpts() *surveyor.Options {
 	opts.KeyFile = viper.GetString("tlskey")
 	opts.CaFile = viper.GetString("tlscacert")
 	opts.TLSFirst = viper.GetBool("tlsfirst")
+	opts.TLSInsecure = viper.GetBool("tlsinsecure")
 	opts.HTTPCertFile = viper.GetString("http-tlscert")
 	opts.HTTPKeyFile = viper.GetString("http-tlskey")
 	opts.HTTPCaFile = viper.GetString("http-tlscacert")

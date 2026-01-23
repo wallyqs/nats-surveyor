@@ -309,6 +309,10 @@ func (cp *natsConnPool) getPooledConn(key string, cfg *NatsContext) (*pooledNats
 			opts = append(opts, nats.ClientCert(cfg.TLSCert, cfg.TLSKey))
 		}
 
+		if cp.natsDefaults.TLSConfig != nil {
+			opts = append(opts, nats.Secure(cp.natsDefaults.TLSConfig))
+		}
+
 		nc, err := nats.Connect(cfg.URL, opts...)
 		if err != nil {
 			return nil, err
