@@ -211,6 +211,12 @@ func NewJetStreamCluster(t *testing.T) *SuperCluster {
 // StartJetStreamServerFromConfig starts a JetStream server using the provided configuration
 // StoreDir from config will not be used - instead, a tmp directory will be created for the test
 func StartJetStreamServerFromConfig(t *testing.T, confFile string) *server.Server {
+	return StartJetStreamServerFromConfigWithOpts(t, confFile, nil)
+}
+
+// StartJetStreamServerFromConfigWithOpts starts a JetStream server using the provided configuration
+// and applies the given callback to modify server options before starting.
+func StartJetStreamServerFromConfigWithOpts(t *testing.T, confFile string, modifyOpts func(*server.Options)) *server.Server {
 	opts, err := server.ProcessConfigFile(confFile)
 	if err != nil {
 		t.Fatalf("Error processing config file: %v", err)
@@ -223,6 +229,10 @@ func StartJetStreamServerFromConfig(t *testing.T, confFile string) *server.Serve
 	}
 	opts.StoreDir = tdir
 
+	if modifyOpts != nil {
+		modifyOpts(opts)
+	}
+
 	s, err := server.NewServer(opts)
 	if err != nil {
 		t.Fatalf("Error creating server: %s", err)
@@ -234,6 +244,43 @@ func StartJetStreamServerFromConfig(t *testing.T, confFile string) *server.Serve
 		t.Fatal("Unable to start NATS Server")
 	}
 	return s
+}
+
+// NewJetStreamClusterWithOpts creates a 3-server JetStream cluster with custom server options.
+func NewJetStreamClusterWithOpts(t *testing.T, modifyOpts func(*server.Options)) *SuperCluster {
+	t.Helper()
+	cluster := SuperCluster{
+		Servers: make([]*server.Server, 0),
+	}
+	for _, confFile := range jetStreamConfigFiles {
+		srv := StartJetStreamServerFromConfigWithOpts(t, confFile, modifyOpts)
+		cluster.Servers = append(cluster.Servers, srv)
+	}
+	for _, s := range cluster.Servers {
+		nc, err := nats.Connect(s.ClientURL())
+		if err != nil {
+			t.Fatalf("Unable to connect to server %q: %s", s.Name(), err)
+		}
+
+		// wait until JetStream is ready
+		timeout := time.Now().Add(10 * time.Second)
+		for time.Now().Before(timeout) {
+			jsm, err := nc.JetStream()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = jsm.AccountInfo()
+			if err != nil {
+				time.Sleep(500 * time.Millisecond)
+			}
+			break
+		}
+		if err != nil {
+			t.Fatalf("Unexpected error creating stream: %v", err)
+		}
+		cluster.Clients = append(cluster.Clients, nc)
+	}
+	return &cluster
 }
 
 // Shutdown shuts the supercluster down

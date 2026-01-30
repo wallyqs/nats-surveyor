@@ -28,6 +28,7 @@ import (
 	"time"
 
 	st "github.com/nats-io/nats-surveyor/test"
+	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
@@ -1216,4 +1217,119 @@ func parseLabels(line string) (string, map[string]string) {
 		labels[key] = value
 	}
 	return metric, labels
+}
+
+func TestSurveyor_MetaClusterSnapshotMetrics(t *testing.T) {
+	// Create a 3-node JetStream cluster with a very low meta_compact_size
+	// to trigger meta snapshots when creating streams and consumers.
+	sc := st.NewJetStreamClusterWithOpts(t, func(opts *server.Options) {
+		opts.JetStreamMetaCompactSize = 120
+	})
+	defer sc.Shutdown()
+
+	nc := sc.Clients[0]
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("Error creating JetStream context: %s", err)
+	}
+
+	// Create several streams with replicas to generate meta cluster RAFT activity.
+	for i := 0; i < 5; i++ {
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     fmt.Sprintf("SNAP%d", i),
+			Subjects: []string{fmt.Sprintf("snap.%d", i)},
+			Replicas: 3,
+		})
+		if err != nil {
+			t.Fatalf("Error adding stream: %s", err)
+		}
+	}
+
+	// Create consumers on each stream to add more meta entries.
+	for i := 0; i < 5; i++ {
+		for j := 0; j < 3; j++ {
+			_, err = js.AddConsumer(fmt.Sprintf("SNAP%d", i), &nats.ConsumerConfig{
+				Durable:   fmt.Sprintf("cons_%d_%d", i, j),
+				AckPolicy: nats.AckExplicitPolicy,
+			})
+			if err != nil {
+				t.Fatalf("Error adding consumer: %s", err)
+			}
+		}
+	}
+
+	// Publish messages to generate further activity.
+	for i := 0; i < 5; i++ {
+		for j := 0; j < 20; j++ {
+			_, err = js.Publish(fmt.Sprintf("snap.%d", i), []byte("data"))
+			if err != nil {
+				t.Fatalf("Error publishing message: %s", err)
+			}
+		}
+	}
+
+	// Start surveyor with account collection enabled to trigger JSZ polling.
+	opt := getTestOptions()
+	opt.Credentials = ""
+	opt.NATSUser = "admin"
+	opt.NATSPassword = "s3cr3t!"
+	opt.Accounts = true
+	opt.ExpectedServers = 3
+	s, err := NewSurveyor(opt)
+	if err != nil {
+		t.Fatalf("couldn't create surveyor: %v", err)
+	}
+	if err = s.Start(); err != nil {
+		t.Fatalf("start error: %v", err)
+	}
+	defer s.Stop()
+
+	// Poll the metrics endpoint and check for snapshot metrics.
+	// Use retries since the first poll may not have all data yet.
+	var output string
+	wantMetrics := []string{
+		"nats_core_jetstream_meta_cluster_snapshot_pending_entries",
+		"nats_core_jetstream_meta_cluster_snapshot_pending_bytes",
+		"nats_core_jetstream_meta_cluster_snapshot_last_time",
+		"nats_core_jetstream_meta_cluster_snapshot_last_duration_ns",
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		output, err = PollSurveyorEndpoint(t, "http://127.0.0.1:7777/metrics", false, http.StatusOK)
+		if err != nil {
+			t.Logf("Poll error (retrying): %v", err)
+			time.Sleep(time.Second)
+			continue
+		}
+
+		allFound := true
+		for _, m := range wantMetrics {
+			if !strings.Contains(output, m) {
+				allFound = false
+				break
+			}
+		}
+		if allFound {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+
+	for _, m := range wantMetrics {
+		if !strings.Contains(output, m) {
+			t.Fatalf("missing expected metric %q in output:\n%s", m, output)
+		}
+	}
+
+	// Verify that the last_time metric has a non-zero value (snapshot was actually taken).
+	lastTimeRe := regexp.MustCompile(`nats_core_jetstream_meta_cluster_snapshot_last_time\{[^}]+\}\s+(\S+)`)
+	matches := lastTimeRe.FindStringSubmatch(output)
+	if len(matches) < 2 {
+		t.Fatalf("could not find last_time metric value in output")
+	}
+	if matches[1] == "0" || matches[1] == "-6795364578871345152" {
+		// -6795364578871345152 is time.Time{}.UnixNano() - indicates zero time
+		t.Fatalf("last_time metric has zero value %s, expected a real timestamp", matches[1])
+	}
 }
