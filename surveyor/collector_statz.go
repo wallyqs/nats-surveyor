@@ -1720,16 +1720,6 @@ func (sc *StatzCollector) Collect(ch chan<- prometheus.Metric) {
 							metrics.newGaugeMetric(sc.descs.JetstreamClusterRaftGroupReplicaOffline, float64(0), jsClusterReplicaLabelValues)
 						}
 					}
-
-					// Meta Cluster Snapshot Stats (from nats-server commit 5ed0c1498e46f93ce)
-					if sm.Stats.JetStream.Meta.Snapshot != nil {
-						jsMetaSnapshotLabelValues := []string{sm.Server.ID, serverName(&sm.Server), sm.Server.Cluster}
-						snapshot := sm.Stats.JetStream.Meta.Snapshot
-						metrics.newGaugeMetric(sc.descs.JetstreamMetaClusterSnapshotPendingEntries, float64(snapshot.PendingEntries), jsMetaSnapshotLabelValues)
-						metrics.newGaugeMetric(sc.descs.JetstreamMetaClusterSnapshotPendingBytes, float64(snapshot.PendingSize), jsMetaSnapshotLabelValues)
-						metrics.newGaugeMetric(sc.descs.JetstreamMetaClusterSnapshotLastTime, float64(snapshot.LastTime.UnixNano()), jsMetaSnapshotLabelValues)
-						metrics.newGaugeMetric(sc.descs.JetstreamMetaClusterSnapshotLastDuration, float64(snapshot.LastDuration), jsMetaSnapshotLabelValues)
-					}
 				}
 			}
 
@@ -1982,6 +1972,15 @@ func (sc *StatzCollector) Collect(ch chan<- prometheus.Metric) {
 				metrics.newGaugeMetric(sc.descs.JetstreamServerBytes, float64(jss.Data.Bytes), jsServerLabelValues)
 				metrics.newGaugeMetric(sc.descs.JetstreamServerMaxMemory, float64(jss.Data.Config.MaxMemory), jsServerLabelValues)
 				metrics.newGaugeMetric(sc.descs.JetstreamServerMaxStorage, float64(jss.Data.Config.MaxStore), jsServerLabelValues)
+
+				// Meta Cluster Snapshot Stats (from nats-server commit 5ed0c1498e46f93ce)
+				if jss.Data.Meta != nil && jss.Data.Meta.Snapshot != nil {
+					snapshot := jss.Data.Meta.Snapshot
+					metrics.newGaugeMetric(sc.descs.JetstreamMetaClusterSnapshotPendingEntries, float64(snapshot.PendingEntries), jsServerLabelValues)
+					metrics.newGaugeMetric(sc.descs.JetstreamMetaClusterSnapshotPendingBytes, float64(snapshot.PendingSize), jsServerLabelValues)
+					metrics.newGaugeMetric(sc.descs.JetstreamMetaClusterSnapshotLastTime, float64(snapshot.LastTime.UnixNano()), jsServerLabelValues)
+					metrics.newGaugeMetric(sc.descs.JetstreamMetaClusterSnapshotLastDuration, float64(snapshot.LastDuration), jsServerLabelValues)
+				}
 			}
 		}
 
